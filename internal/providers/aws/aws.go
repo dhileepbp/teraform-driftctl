@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/driftctl/driftctl/internal/model"
+	"github.com/driftctl/driftctl/internal/providers/providerconfig"
 )
 
 // Provider implements AWS cloud resource fetching.
@@ -30,9 +31,9 @@ func (p *Provider) SupportedTypes() []string {
 	}
 }
 
-func (p *Provider) FetchResources(ctx context.Context, expected []model.Resource, regions []string) ([]model.Resource, error) {
+func (p *Provider) FetchResources(ctx context.Context, expected []model.Resource, opts providerconfig.FetchOptions) ([]model.Resource, error) {
 	regionSet := make(map[string]bool)
-	for _, r := range regions {
+	for _, r := range opts.Regions {
 		regionSet[r] = true
 	}
 	for _, e := range expected {
@@ -134,4 +135,3 @@ func baseResource(resType, cloudID, name, region string, attrs map[string]any, t
 		Source:     "cloud",
 	}
 }
-

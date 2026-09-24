@@ -3,13 +3,17 @@ package scan
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/driftctl/driftctl/internal/drift"
 	"github.com/driftctl/driftctl/internal/model"
+	"github.com/driftctl/driftctl/internal/notify"
 	"github.com/driftctl/driftctl/internal/providers"
+	"github.com/driftctl/driftctl/internal/providers/providerconfig"
 	"github.com/driftctl/driftctl/internal/state"
 	"github.com/driftctl/driftctl/internal/store"
 )
@@ -20,6 +24,7 @@ type Scanner struct {
 	Extractor   *state.Extractor
 	Providers   *providers.Registry
 	Store       store.Store
+	Notifiers   []notify.Notifier
 }
 
 // Options configures a single scan run.
@@ -29,15 +34,17 @@ type Options struct {
 	Provider      string
 	State         model.StateConfig
 	Regions       []string
+	Subscriptions []string
 	Compare       model.CompareConfig
 	SkipCloud     bool // for testing with state-only
 }
 
-func NewScanner(st store.Store) *Scanner {
+func NewScanner(st store.Store, notifiers ...notify.Notifier) *Scanner {
 	return &Scanner{
 		StateReader: state.NewReader(),
 		Providers:   providers.DefaultRegistry(),
 		Store:       st,
+		Notifiers:   notifiers,
 	}
 }
 
@@ -58,7 +65,8 @@ func (s *Scanner) Run(ctx context.Context, opts Options) (*model.DriftReport, er
 		return nil, fmt.Errorf("save scan: %w", err)
 	}
 
-	extractor := state.NewExtractor(opts.Provider)
+	providerName := normalizeProviderName(opts.Provider)
+	extractor := state.NewExtractor(providerName)
 	stateData, err := s.StateReader.Read(ctx, opts.State)
 	if err != nil {
 		return s.failScan(ctx, report, fmt.Errorf("read state: %w", err))
@@ -70,16 +78,18 @@ func (s *Scanner) Run(ctx context.Context, opts Options) (*model.DriftReport, er
 	}
 
 	var actual []model.Resource
-	var fetchErrors []string
 
 	if !opts.SkipCloud {
-		provider, ok := s.Providers.Get(opts.Provider)
+		provider, ok := s.Providers.Get(providerName)
 		if !ok {
 			return s.failScan(ctx, report, fmt.Errorf("unsupported provider: %s", opts.Provider))
 		}
-		actual, err = provider.FetchResources(ctx, expected, opts.Regions)
+		actual, err = provider.FetchResources(ctx, expected, providerconfig.FetchOptions{
+			Regions:       opts.Regions,
+			Subscriptions: opts.Subscriptions,
+		})
 		if err != nil {
-			fetchErrors = append(fetchErrors, err.Error())
+			return s.failScan(ctx, report, fmt.Errorf("fetch live %s resources: %w", providerName, err))
 		}
 	}
 
@@ -90,13 +100,21 @@ func (s *Scanner) Run(ctx context.Context, opts Options) (*model.DriftReport, er
 	report.Status = model.ScanStatusCompleted
 	report.Summary = drift.BuildSummary(len(expected), findings)
 	report.Findings = findings
-	report.Errors = fetchErrors
 
 	if err := s.Store.SaveScan(ctx, report); err != nil {
 		return nil, fmt.Errorf("save completed scan: %w", err)
 	}
+	s.notify(ctx, report)
 
 	return report, nil
+}
+
+func normalizeProviderName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "azurerm" {
+		return "azure"
+	}
+	return name
 }
 
 func (s *Scanner) failScan(ctx context.Context, report *model.DriftReport, err error) (*model.DriftReport, error) {
@@ -104,5 +122,21 @@ func (s *Scanner) failScan(ctx context.Context, report *model.DriftReport, err e
 	report.Status = model.ScanStatusFailed
 	report.Errors = append(report.Errors, err.Error())
 	_ = s.Store.SaveScan(ctx, report)
+	s.notify(ctx, report)
 	return report, err
+}
+
+func (s *Scanner) notify(ctx context.Context, report *model.DriftReport) {
+	if len(s.Notifiers) == 0 {
+		return
+	}
+	for _, notifier := range s.Notifiers {
+		if err := notifier.Notify(ctx, report); err != nil {
+			message := fmt.Sprintf("notification failed: %v", err)
+			report.Errors = append(report.Errors, message)
+			log.Printf("scan %s: %s", report.ScanID, message)
+		}
+	}
+	// Persist notification errors without making delivery failure change drift results.
+	_ = s.Store.SaveScan(ctx, report)
 }

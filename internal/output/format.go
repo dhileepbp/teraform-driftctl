@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -42,20 +44,62 @@ func writeTable(w io.Writer, report *model.DriftReport) error {
 	fmt.Fprintln(tw, "")
 
 	if len(report.Findings) == 0 {
-		fmt.Fprintln(tw, "No drift detected.")
-		return tw.Flush()
+		if report.Status == model.ScanStatusFailed {
+			fmt.Fprintln(tw, "No drift findings produced.")
+		} else {
+			fmt.Fprintln(tw, "No drift detected.")
+		}
+	} else {
+		fmt.Fprintln(tw, "FINDINGS")
+		fmt.Fprintln(tw, "KIND\tSEVERITY\tRESOURCE\tFIELD\tEXPECTED\tACTUAL")
+		for _, f := range report.Findings {
+			fmt.Fprintf(tw, "%s\t%s\t%s (%s)\t%s\t%v\t%v\n",
+				f.Kind, f.Severity, f.ResourceName, f.ResourceType, f.Field, f.Expected, f.Actual)
+		}
 	}
 
-	fmt.Fprintln(tw, "FINDINGS")
-	fmt.Fprintln(tw, "KIND\tSEVERITY\tRESOURCE\tFIELD\tEXPECTED\tACTUAL")
-	for _, f := range report.Findings {
-		fmt.Fprintf(tw, "%s\t%s\t%s (%s)\t%s\t%v\t%v\n",
-			f.Kind, f.Severity, f.ResourceName, f.ResourceType, f.Field, f.Expected, f.Actual)
+	if len(report.Errors) > 0 {
+		fmt.Fprintln(tw, "")
+		fmt.Fprintln(tw, "ERRORS")
+		for _, reportErr := range report.Errors {
+			fmt.Fprintf(tw, "- %s\n", reportErr)
+		}
 	}
 	return tw.Flush()
 }
 
 // HasDrift returns true if the report contains actionable drift.
 func HasDrift(report *model.DriftReport) bool {
-	return report.Summary.TotalFindings > 0
+	return report.HasDrift()
+}
+
+// WriteJSONFile writes a report atomically with owner-only permissions.
+func WriteJSONFile(path string, report *model.DriftReport) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("JSON output path is required")
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tfdriftctl-*.json")
+	if err != nil {
+		return fmt.Errorf("create JSON output: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	enc := json.NewEncoder(tmp)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(report); err != nil {
+		tmp.Close()
+		return fmt.Errorf("encode JSON output: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replace JSON output: %w", err)
+	}
+	return nil
 }

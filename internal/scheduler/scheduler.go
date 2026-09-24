@@ -76,6 +76,7 @@ func (s *Scheduler) registerWorkspace(ws *model.Workspace, cronExpr string) erro
 			Provider:      wsCopy.Provider,
 			State:         wsCopy.State,
 			Regions:       wsCopy.Regions,
+			Subscriptions: wsCopy.Subscriptions,
 			Compare:       wsCopy.Compare,
 		})
 		if err != nil {

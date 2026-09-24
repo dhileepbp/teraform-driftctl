@@ -10,6 +10,7 @@ import (
 
 	"github.com/driftctl/driftctl/internal/config"
 	"github.com/driftctl/driftctl/internal/model"
+	"github.com/driftctl/driftctl/internal/notify"
 	"github.com/driftctl/driftctl/internal/output"
 	"github.com/driftctl/driftctl/internal/scan"
 	"github.com/driftctl/driftctl/internal/store"
@@ -25,8 +26,10 @@ func main() {
 func newRootCmd() *cobra.Command {
 	var cfgFile string
 	root := &cobra.Command{
-		Use:   "driftctl",
-		Short: "Terraform drift detection CLI",
+		Use:           "tfdriftctl",
+		Short:         "Terraform drift detection CLI",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
 	root.PersistentFlags().StringVar(&cfgFile, "config", "", "path to driftctl.yaml")
 	root.AddCommand(newScanCmd(&cfgFile))
@@ -34,6 +37,57 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newWorkspaceCmd(&cfgFile))
 	root.AddCommand(newScheduleCmd(&cfgFile))
 	return root
+}
+
+type slackFlags struct {
+	channels   []string
+	tokenEnv   string
+	webhookEnv string
+	notifyOn   []string
+}
+
+func (f *slackFlags) bind(cmd *cobra.Command) {
+	cmd.Flags().StringSliceVar(&f.channels, "slack-channel", nil, "Slack channel ID or name (repeatable; enables Slack)")
+	cmd.Flags().StringVar(&f.tokenEnv, "slack-token-env", "", "environment variable containing a Slack bot token")
+	cmd.Flags().StringVar(&f.webhookEnv, "slack-webhook-env", "", "environment variable containing a Slack webhook URL")
+	cmd.Flags().StringSliceVar(&f.notifyOn, "slack-notify-on", nil, "events to notify: drift,error,clean,always")
+}
+
+func buildNotifiers(cfg *config.File, flags slackFlags) ([]notify.Notifier, error) {
+	var slackCfg notify.SlackConfig
+	if cfg != nil {
+		slackCfg = cfg.Notifications.Slack
+	}
+	if len(flags.channels) > 0 {
+		slackCfg.Enabled = true
+		slackCfg.Channels = flags.channels
+	}
+	if flags.tokenEnv != "" {
+		slackCfg.Enabled = true
+		slackCfg.BotTokenEnv = flags.tokenEnv
+	}
+	if flags.webhookEnv != "" {
+		slackCfg.Enabled = true
+		slackCfg.WebhookEnv = flags.webhookEnv
+	}
+	if len(flags.notifyOn) > 0 {
+		slackCfg.NotifyOn = flags.notifyOn
+	}
+	if !slackCfg.Enabled {
+		return nil, nil
+	}
+	if slackCfg.BotTokenEnv == "" && slackCfg.WebhookEnv == "" {
+		if len(slackCfg.Channels) > 0 {
+			slackCfg.BotTokenEnv = "SLACK_BOT_TOKEN"
+		} else {
+			slackCfg.WebhookEnv = "SLACK_WEBHOOK_URL"
+		}
+	}
+	slackNotifier, err := notify.NewSlack(slackCfg)
+	if err != nil {
+		return nil, err
+	}
+	return []notify.Notifier{slackNotifier}, nil
 }
 
 func openStore(cfgFile string) (store.Store, *config.File, error) {
@@ -58,15 +112,18 @@ func openStore(cfgFile string) (store.Store, *config.File, error) {
 
 func newScanCmd(cfgFile *string) *cobra.Command {
 	var (
-		workspace   string
-		statePath   string
-		provider    string
-		regions     []string
-		outputFmt   string
-		skipCloud   bool
-		stateBucket string
-		stateKey    string
-		stateRegion string
+		workspace     string
+		statePath     string
+		provider      string
+		regions       []string
+		subscriptions []string
+		outputFmt     string
+		jsonFile      string
+		skipCloud     bool
+		stateBucket   string
+		stateKey      string
+		stateRegion   string
+		slack         slackFlags
 	)
 
 	cmd := &cobra.Command{
@@ -87,7 +144,11 @@ func newScanCmd(cfgFile *string) *cobra.Command {
 				}
 			}
 
-			scanner := scan.NewScanner(st)
+			notifiers, err := buildNotifiers(cfg, slack)
+			if err != nil {
+				return fmt.Errorf("configure notifications: %w", err)
+			}
+			scanner := scan.NewScanner(st, notifiers...)
 			opts := scan.Options{Compare: model.CompareConfig{}, Regions: regions}
 
 			if workspace != "" {
@@ -100,6 +161,7 @@ func newScanCmd(cfgFile *string) *cobra.Command {
 				opts.Provider = ws.Provider
 				opts.State = ws.State
 				opts.Regions = ws.Regions
+				opts.Subscriptions = ws.Subscriptions
 				opts.Compare = ws.Compare
 			} else {
 				if statePath == "" && stateBucket == "" {
@@ -121,6 +183,7 @@ func newScanCmd(cfgFile *string) *cobra.Command {
 					opts.State = model.StateConfig{Backend: "local", Path: statePath}
 				}
 			}
+			opts.Subscriptions = append(opts.Subscriptions, subscriptions...)
 			opts.SkipCloud = skipCloud
 
 			report, err := scanner.Run(cmd.Context(), opts)
@@ -128,6 +191,14 @@ func newScanCmd(cfgFile *string) *cobra.Command {
 				return err
 			}
 			if err := output.Format(os.Stdout, report, outputFmt); err != nil {
+				return err
+			}
+			if jsonFile != "" {
+				if err := output.WriteJSONFile(jsonFile, report); err != nil {
+					return err
+				}
+			}
+			if err != nil {
 				return err
 			}
 			if output.HasDrift(report) {
@@ -141,16 +212,19 @@ func newScanCmd(cfgFile *string) *cobra.Command {
 	cmd.Flags().StringVar(&statePath, "state", "", "path to terraform.tfstate")
 	cmd.Flags().StringVar(&provider, "provider", "aws", "cloud provider")
 	cmd.Flags().StringSliceVar(&regions, "region", nil, "cloud regions (repeatable)")
+	cmd.Flags().StringSliceVar(&subscriptions, "subscription", nil, "Azure subscription ID (repeatable)")
 	cmd.Flags().StringVar(&outputFmt, "output", "table", "output format: json|table")
+	cmd.Flags().StringVar(&jsonFile, "json-file", "", "also write the complete report to a JSON file")
 	cmd.Flags().BoolVar(&skipCloud, "skip-cloud", false, "skip cloud fetch (state-only, for testing)")
 	cmd.Flags().StringVar(&stateBucket, "state-bucket", "", "S3 bucket for terraform state")
 	cmd.Flags().StringVar(&stateKey, "state-key", "", "S3 key for terraform state")
 	cmd.Flags().StringVar(&stateRegion, "state-region", "", "S3 region for terraform state")
+	slack.bind(cmd)
 	return cmd
 }
 
 func newReportCmd(cfgFile *string) *cobra.Command {
-	var outputFmt string
+	var outputFmt, jsonFile string
 	cmd := &cobra.Command{
 		Use:   "report [scan-id]",
 		Short: "Show a drift report",
@@ -165,10 +239,17 @@ func newReportCmd(cfgFile *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.Format(os.Stdout, report, outputFmt)
+			if err := output.Format(os.Stdout, report, outputFmt); err != nil {
+				return err
+			}
+			if jsonFile != "" {
+				return output.WriteJSONFile(jsonFile, report)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&outputFmt, "output", "table", "output format: json|table")
+	cmd.Flags().StringVar(&jsonFile, "json-file", "", "also write the complete report to a JSON file")
 	return cmd
 }
 

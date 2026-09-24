@@ -148,6 +148,7 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
 		Provider:      ws.Provider,
 		State:         ws.State,
 		Regions:       ws.Regions,
+		Subscriptions: ws.Subscriptions,
 		Compare:       ws.Compare,
 	})
 	if err != nil && report == nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/driftctl/driftctl/internal/api"
 	"github.com/driftctl/driftctl/internal/config"
+	"github.com/driftctl/driftctl/internal/notify"
 	"github.com/driftctl/driftctl/internal/scan"
 	"github.com/driftctl/driftctl/internal/scheduler"
 	"github.com/driftctl/driftctl/internal/store"
@@ -43,7 +44,16 @@ func main() {
 		}
 	}
 
-	scanner := scan.NewScanner(st)
+	var notifiers []notify.Notifier
+	if cfg.Notifications.Slack.Enabled {
+		slackNotifier, err := notify.NewSlack(cfg.Notifications.Slack)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "configure Slack: %v\n", err)
+			os.Exit(1)
+		}
+		notifiers = append(notifiers, slackNotifier)
+	}
+	scanner := scan.NewScanner(st, notifiers...)
 	sched := scheduler.New(scanner, st)
 	if err := sched.LoadFromStore(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "load schedules: %v\n", err)

@@ -64,9 +64,17 @@ func (e *Extractor) extractResource(res tfResource, inst tfInstance) (model.Reso
 		return model.Resource{}, false
 	}
 
+	provider := e.Provider
+	if provider == "" {
+		provider = inferProvider(res.Provider, res.Type)
+	}
+
 	cloudID := resolveCloudID(res.Type, attrs)
 	if cloudID == "" {
 		return model.Resource{}, false
+	}
+	if provider == "azure" {
+		cloudID = normalizeAzureResourceID(cloudID)
 	}
 
 	region := stringAttr(attrs, "region", "location", "availability_zone")
@@ -82,11 +90,6 @@ func (e *Extractor) extractResource(res tfResource, inst tfInstance) (model.Reso
 
 	normalized := normalizeAttributes(res.Type, attrs)
 
-	provider := e.Provider
-	if provider == "" {
-		provider = inferProvider(res.Provider, res.Type)
-	}
-
 	id := fmt.Sprintf("%s/%s/%s", provider, res.Type, cloudID)
 
 	return model.Resource{
@@ -101,6 +104,10 @@ func (e *Extractor) extractResource(res tfResource, inst tfInstance) (model.Reso
 		Source:     "state",
 		Module:     strings.TrimPrefix(res.Module, "module."),
 	}, true
+}
+
+func normalizeAzureResourceID(id string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(id), "/"))
 }
 
 func resolveCloudID(resType string, attrs map[string]any) string {
@@ -216,6 +223,18 @@ func compareKeysForType(resType string) []string {
 		return []string{"cidr_block", "enable_dns_hostnames", "enable_dns_support", "instance_tenancy"}
 	case "aws_subnet":
 		return []string{"cidr_block", "vpc_id", "map_public_ip_on_launch", "availability_zone"}
+	case "azurerm_resource_group":
+		return []string{"location"}
+	case "azurerm_storage_account":
+		return []string{"account_tier", "account_replication_type", "account_kind", "access_tier", "min_tls_version", "https_traffic_only_enabled"}
+	case "azurerm_virtual_network":
+		return []string{"address_space", "dns_servers"}
+	case "azurerm_subnet":
+		return []string{"address_prefixes", "network_security_group_id"}
+	case "azurerm_linux_virtual_machine", "azurerm_windows_virtual_machine", "azurerm_virtual_machine":
+		return []string{"size"}
+	case "azurerm_public_ip":
+		return []string{"allocation_method", "sku"}
 	default:
 		var keys []string
 		for k := range attrsFromType(resType) {

@@ -68,6 +68,11 @@ type DriftReport struct {
 	Errors      []string       `json:"errors,omitempty"`
 }
 
+// HasDrift reports whether the scan found actionable infrastructure drift.
+func (r *DriftReport) HasDrift() bool {
+	return r != nil && r.Summary.TotalFindings > 0
+}
+
 // ScanStatus values.
 const (
 	ScanStatusRunning   = "running"
@@ -77,13 +82,14 @@ const (
 
 // Workspace represents a configured drift detection target.
 type Workspace struct {
-	ID       string         `json:"id"`
-	Name     string         `json:"name"`
-	Provider string         `json:"provider"`
-	State    StateConfig    `json:"state"`
-	Regions  []string       `json:"regions"`
-	Compare  CompareConfig  `json:"compare"`
-	Schedule *ScheduleConfig `json:"schedule,omitempty"`
+	ID            string          `json:"id" yaml:"id,omitempty"`
+	Name          string          `json:"name" yaml:"name"`
+	Provider      string          `json:"provider" yaml:"provider"`
+	State         StateConfig     `json:"state" yaml:"state"`
+	Regions       []string        `json:"regions,omitempty" yaml:"regions,omitempty"`
+	Subscriptions []string        `json:"subscriptions,omitempty" yaml:"subscriptions,omitempty"`
+	Compare       CompareConfig   `json:"compare" yaml:"compare,omitempty"`
+	Schedule      *ScheduleConfig `json:"schedule,omitempty" yaml:"schedule,omitempty"`
 }
 
 // StateConfig describes where Terraform state is stored.
@@ -98,7 +104,7 @@ type StateConfig struct {
 
 // CompareConfig controls drift comparison behavior.
 type CompareConfig struct {
-	IgnoreTags      []string `json:"ignore_tags" yaml:"ignore_tags"`
+	IgnoreTags       []string `json:"ignore_tags" yaml:"ignore_tags"`
 	IgnoreAttributes []string `json:"ignore_attributes" yaml:"ignore_attributes"`
 }
 
@@ -109,7 +115,7 @@ type ScheduleConfig struct {
 
 // ResourceSelector targets specific resources for cloud fetch.
 type ResourceSelector struct {
-	Type   string
-	Region string
+	Type    string
+	Region  string
 	CloudID string
 }

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     provider TEXT NOT NULL,
     state_json TEXT NOT NULL,
     regions_json TEXT NOT NULL,
+    subscriptions_json TEXT NOT NULL DEFAULT '[]',
     compare_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -60,7 +61,36 @@ CREATE TABLE IF NOT EXISTS schedules (
     cron TEXT NOT NULL
 );
 `
-	_, err := s.db.Exec(schema)
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	return s.ensureWorkspaceSubscriptionsColumn()
+}
+
+func (s *SQLiteStore) ensureWorkspaceSubscriptionsColumn() error {
+	rows, err := s.db.Query(`PRAGMA table_info(workspaces)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if name == "subscriptions_json" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`ALTER TABLE workspaces ADD COLUMN subscriptions_json TEXT NOT NULL DEFAULT '[]'`)
 	return err
 }
 
@@ -74,44 +104,47 @@ func (s *SQLiteStore) SaveWorkspace(ctx context.Context, ws *model.Workspace) er
 	}
 	stateJSON, _ := json.Marshal(ws.State)
 	regionsJSON, _ := json.Marshal(ws.Regions)
+	subscriptionsJSON, _ := json.Marshal(ws.Subscriptions)
 	compareJSON, _ := json.Marshal(ws.Compare)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO workspaces (id, name, provider, state_json, regions_json, compare_json, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO workspaces (id, name, provider, state_json, regions_json, subscriptions_json, compare_json, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(name) DO UPDATE SET
 		   provider=excluded.provider,
 		   state_json=excluded.state_json,
 		   regions_json=excluded.regions_json,
+		   subscriptions_json=excluded.subscriptions_json,
 		   compare_json=excluded.compare_json`,
-		ws.ID, ws.Name, ws.Provider, string(stateJSON), string(regionsJSON), string(compareJSON), time.Now().UTC().Format(time.RFC3339),
+		ws.ID, ws.Name, ws.Provider, string(stateJSON), string(regionsJSON), string(subscriptionsJSON), string(compareJSON), time.Now().UTC().Format(time.RFC3339),
 	)
 	return err
 }
 
 func (s *SQLiteStore) GetWorkspace(ctx context.Context, id string) (*model.Workspace, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, provider, state_json, regions_json, compare_json FROM workspaces WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, provider, state_json, regions_json, subscriptions_json, compare_json FROM workspaces WHERE id = ?`, id)
 	return scanWorkspace(row)
 }
 
 func (s *SQLiteStore) GetWorkspaceByName(ctx context.Context, name string) (*model.Workspace, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, provider, state_json, regions_json, compare_json FROM workspaces WHERE name = ?`, name)
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, provider, state_json, regions_json, subscriptions_json, compare_json FROM workspaces WHERE name = ?`, name)
 	return scanWorkspace(row)
 }
 
 func scanWorkspace(row *sql.Row) (*model.Workspace, error) {
 	var ws model.Workspace
-	var stateJSON, regionsJSON, compareJSON string
-	if err := row.Scan(&ws.ID, &ws.Name, &ws.Provider, &stateJSON, &regionsJSON, &compareJSON); err != nil {
+	var stateJSON, regionsJSON, subscriptionsJSON, compareJSON string
+	if err := row.Scan(&ws.ID, &ws.Name, &ws.Provider, &stateJSON, &regionsJSON, &subscriptionsJSON, &compareJSON); err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal([]byte(stateJSON), &ws.State)
 	_ = json.Unmarshal([]byte(regionsJSON), &ws.Regions)
+	_ = json.Unmarshal([]byte(subscriptionsJSON), &ws.Subscriptions)
 	_ = json.Unmarshal([]byte(compareJSON), &ws.Compare)
 	return &ws, nil
 }
 
 func (s *SQLiteStore) ListWorkspaces(ctx context.Context) ([]model.Workspace, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, provider, state_json, regions_json, compare_json FROM workspaces ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, provider, state_json, regions_json, subscriptions_json, compare_json FROM workspaces ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -119,12 +152,13 @@ func (s *SQLiteStore) ListWorkspaces(ctx context.Context) ([]model.Workspace, er
 	var list []model.Workspace
 	for rows.Next() {
 		var ws model.Workspace
-		var stateJSON, regionsJSON, compareJSON string
-		if err := rows.Scan(&ws.ID, &ws.Name, &ws.Provider, &stateJSON, &regionsJSON, &compareJSON); err != nil {
+		var stateJSON, regionsJSON, subscriptionsJSON, compareJSON string
+		if err := rows.Scan(&ws.ID, &ws.Name, &ws.Provider, &stateJSON, &regionsJSON, &subscriptionsJSON, &compareJSON); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(stateJSON), &ws.State)
 		_ = json.Unmarshal([]byte(regionsJSON), &ws.Regions)
+		_ = json.Unmarshal([]byte(subscriptionsJSON), &ws.Subscriptions)
 		_ = json.Unmarshal([]byte(compareJSON), &ws.Compare)
 		list = append(list, ws)
 	}

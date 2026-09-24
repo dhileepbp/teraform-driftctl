@@ -1,0 +1,53 @@
+# Azure DevOps example using an Azure Resource Manager service connection with
+# workload identity federation. No client secret is created or passed.
+parameters:
+  - name: azureServiceConnection
+    type: string
+  - name: terraformStatePath
+    type: string
+    default: terraform.tfstate
+
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: GoTool@0
+    displayName: Use Go 1.24
+    inputs:
+      version: 1.24.x
+
+  - script: |
+      go test ./...
+      go build -o bin/tfdriftctl ./cmd/driftctl
+    displayName: Build tfdriftctl
+
+  # AzureCLI@2 exposes AZURESUBSCRIPTION_CLIENT_ID,
+  # AZURESUBSCRIPTION_TENANT_ID, AZURESUBSCRIPTION_SERVICE_CONNECTION_ID, and
+  # SYSTEM_OIDCREQUESTURI for the selected workload-identity service connection.
+  # tfdriftctl combines those with SYSTEM_ACCESSTOKEN to authenticate through
+  # AzurePipelinesCredential.
+  - task: AzureCLI@2
+    displayName: Detect Azure Terraform drift
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+    inputs:
+      azureSubscription: ${{ parameters.azureServiceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        read -r subscription_id < <(az account show --query id -o tsv)
+        ./bin/tfdriftctl scan \
+          --provider azure \
+          --state "${{ parameters.terraformStatePath }}" \
+          --subscription "$subscription_id" \
+          --output table \
+          --json-file "$(Build.ArtifactStagingDirectory)/tfdrift-report.json"
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish drift report
+    condition: always()
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)/tfdrift-report.json
+      artifact: terraform-drift-report

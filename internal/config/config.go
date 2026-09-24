@@ -7,13 +7,19 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/driftctl/driftctl/internal/model"
+	"github.com/driftctl/driftctl/internal/notify"
 )
 
 // File represents the driftctl.yaml configuration.
 type File struct {
-	Database string            `yaml:"database"`
-	API      APIConfig         `yaml:"api"`
-	Workspaces []model.Workspace `yaml:"workspaces"`
+	Database      string              `yaml:"database"`
+	API           APIConfig           `yaml:"api"`
+	Notifications NotificationsConfig `yaml:"notifications"`
+	Workspaces    []model.Workspace   `yaml:"workspaces"`
+}
+
+type NotificationsConfig struct {
+	Slack notify.SlackConfig `yaml:"slack"`
 }
 
 // APIConfig holds server settings.
