@@ -1,9 +1,5 @@
 database: driftctl.db
 
-api:
-  addr: ":8080"
-  # api_key: "change-me-in-production"
-
 # Credentials are read from environment variables and are never stored here.
 # Use bot_token_env for reliable delivery to multiple channels. Incoming
 # webhooks may be used instead with webhook_env.
@@ -19,26 +15,14 @@ notifications:
     max_findings: 10
 
 workspaces:
-  - name: prod
-    provider: aws
+  - name: azure-prod
+    provider: azure
     state:
       backend: local
-      path: testdata/state/sample.tfstate
-    regions:
-      - us-east-1
+      path: testdata/state/azure-sample.tfstate
+    subscriptions:
+      - 11111111-1111-1111-1111-111111111111
+      - 22222222-2222-2222-2222-222222222222
     compare:
       ignore_tags:
         - tfdriftctl_scan
-    schedule:
-      cron: "0 */6 * * *"
-
-  # Azure workspaces use subscription-scoped Resource Graph discovery.
-  # - name: azure-prod
-  #   provider: azure
-  #   state:
-  #     backend: local
-  #     path: terraform.tfstate
-  #   subscriptions:
-  #     - 00000000-0000-0000-0000-000000000000
-  #   schedule:
-  #     cron: "0 */6 * * *"

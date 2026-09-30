@@ -64,9 +64,13 @@ func (e *Extractor) extractResource(res tfResource, inst tfInstance) (model.Reso
 		return model.Resource{}, false
 	}
 
+	inferredProvider := inferProvider(res.Provider, res.Type)
 	provider := e.Provider
 	if provider == "" {
-		provider = inferProvider(res.Provider, res.Type)
+		provider = inferredProvider
+	}
+	if provider == "azure" && inferredProvider != "azure" {
+		return model.Resource{}, false
 	}
 
 	cloudID := resolveCloudID(res.Type, attrs)
@@ -77,15 +81,9 @@ func (e *Extractor) extractResource(res tfResource, inst tfInstance) (model.Reso
 		cloudID = normalizeAzureResourceID(cloudID)
 	}
 
-	region := stringAttr(attrs, "region", "location", "availability_zone")
-	if strings.HasSuffix(region, "a") || strings.HasSuffix(region, "b") || strings.HasSuffix(region, "c") {
-		// availability_zone -> region approximation for aws
-		if len(region) > 1 {
-			region = region[:len(region)-1]
-		}
-	}
+	region := stringAttr(attrs, "location")
 
-	name := stringAttr(attrs, "name", "bucket", "id", "arn")
+	name := stringAttr(attrs, "name", "id")
 	tags := extractTags(attrs)
 
 	normalized := normalizeAttributes(res.Type, attrs)
@@ -110,16 +108,8 @@ func normalizeAzureResourceID(id string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(id), "/"))
 }
 
-func resolveCloudID(resType string, attrs map[string]any) string {
-	candidates := []string{"id", "arn", "bucket", "name"}
-	switch resType {
-	case "aws_s3_bucket":
-		candidates = []string{"bucket", "id", "arn"}
-	case "aws_instance":
-		candidates = []string{"id", "arn"}
-	case "aws_vpc", "aws_subnet", "aws_security_group":
-		candidates = []string{"id"}
-	}
+func resolveCloudID(_ string, attrs map[string]any) string {
+	candidates := []string{"id"}
 	for _, key := range candidates {
 		if v := stringAttr(attrs, key); v != "" {
 			return v
@@ -162,41 +152,19 @@ func extractTags(attrs map[string]any) map[string]string {
 		}
 	}
 
-	// Terraform AWS provider v4+ uses tags_all
-	if raw, ok := attrs["tags_all"]; ok {
-		switch t := raw.(type) {
-		case map[string]any:
-			for k, v := range t {
-				tags[k] = fmt.Sprintf("%v", v)
-			}
-		case map[string]string:
-			for k, v := range t {
-				tags[k] = v
-			}
-		}
-	}
-
 	return tags
 }
 
 func inferProvider(providerField, resType string) string {
-	if strings.Contains(providerField, "aws") || strings.HasPrefix(resType, "aws_") {
-		return "aws"
-	}
 	if strings.Contains(providerField, "azurerm") || strings.HasPrefix(resType, "azurerm_") {
 		return "azure"
-	}
-	if strings.Contains(providerField, "google") || strings.HasPrefix(resType, "google_") {
-		return "gcp"
 	}
 	return "unknown"
 }
 
 // terraformOnlyKeys are never compared for drift.
 var terraformOnlyKeys = map[string]bool{
-	"id": true, "arn": true, "tags": true, "tags_all": true,
-	"timeouts": true, "region": true, "availability_zone": true,
-	"owner_id": true, "requester_id": true,
+	"id": true, "tags": true, "timeouts": true,
 }
 
 func normalizeAttributes(resType string, attrs map[string]any) map[string]any {
@@ -213,16 +181,6 @@ func normalizeAttributes(resType string, attrs map[string]any) map[string]any {
 
 func compareKeysForType(resType string) []string {
 	switch resType {
-	case "aws_instance":
-		return []string{"instance_type", "ami", "vpc_security_group_ids", "subnet_id", "monitoring"}
-	case "aws_s3_bucket":
-		return []string{"acl", "force_destroy", "versioning"}
-	case "aws_security_group":
-		return []string{"description", "vpc_id", "ingress", "egress"}
-	case "aws_vpc":
-		return []string{"cidr_block", "enable_dns_hostnames", "enable_dns_support", "instance_tenancy"}
-	case "aws_subnet":
-		return []string{"cidr_block", "vpc_id", "map_public_ip_on_launch", "availability_zone"}
 	case "azurerm_resource_group":
 		return []string{"location"}
 	case "azurerm_storage_account":

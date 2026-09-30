@@ -21,7 +21,6 @@ type DriftKind string
 
 const (
 	DriftMissingInCloud  DriftKind = "missing_in_cloud"
-	DriftExtraInCloud    DriftKind = "extra_in_cloud"
 	DriftAttributeChange DriftKind = "attribute_changed"
 	DriftTagsChanged     DriftKind = "tags_changed"
 )
@@ -49,7 +48,6 @@ type DriftFinding struct {
 type DriftSummary struct {
 	TotalResources   int `json:"total_resources"`
 	MissingInCloud   int `json:"missing_in_cloud"`
-	ExtraInCloud     int `json:"extra_in_cloud"`
 	AttributeChanges int `json:"attribute_changes"`
 	TagChanges       int `json:"tag_changes"`
 	TotalFindings    int `json:"total_findings"`
@@ -82,23 +80,18 @@ const (
 
 // Workspace represents a configured drift detection target.
 type Workspace struct {
-	ID            string          `json:"id" yaml:"id,omitempty"`
-	Name          string          `json:"name" yaml:"name"`
-	Provider      string          `json:"provider" yaml:"provider"`
-	State         StateConfig     `json:"state" yaml:"state"`
-	Regions       []string        `json:"regions,omitempty" yaml:"regions,omitempty"`
-	Subscriptions []string        `json:"subscriptions,omitempty" yaml:"subscriptions,omitempty"`
-	Compare       CompareConfig   `json:"compare" yaml:"compare,omitempty"`
-	Schedule      *ScheduleConfig `json:"schedule,omitempty" yaml:"schedule,omitempty"`
+	ID            string        `json:"id" yaml:"id,omitempty"`
+	Name          string        `json:"name" yaml:"name"`
+	Provider      string        `json:"provider" yaml:"provider"`
+	State         StateConfig   `json:"state" yaml:"state"`
+	Subscriptions []string      `json:"subscriptions,omitempty" yaml:"subscriptions,omitempty"`
+	Compare       CompareConfig `json:"compare" yaml:"compare,omitempty"`
 }
 
 // StateConfig describes where Terraform state is stored.
 type StateConfig struct {
 	Backend string            `json:"backend" yaml:"backend"`
 	Path    string            `json:"path,omitempty" yaml:"path,omitempty"`
-	Bucket  string            `json:"bucket,omitempty" yaml:"bucket,omitempty"`
-	Key     string            `json:"key,omitempty" yaml:"key,omitempty"`
-	Region  string            `json:"region,omitempty" yaml:"region,omitempty"`
 	Extra   map[string]string `json:"extra,omitempty" yaml:"extra,omitempty"`
 }
 
@@ -106,11 +99,6 @@ type StateConfig struct {
 type CompareConfig struct {
 	IgnoreTags       []string `json:"ignore_tags" yaml:"ignore_tags"`
 	IgnoreAttributes []string `json:"ignore_attributes" yaml:"ignore_attributes"`
-}
-
-// ScheduleConfig defines a cron schedule for a workspace.
-type ScheduleConfig struct {
-	Cron string `json:"cron" yaml:"cron"`
 }
 
 // ResourceSelector targets specific resources for cloud fetch.

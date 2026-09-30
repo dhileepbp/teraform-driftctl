@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,10 +55,6 @@ CREATE TABLE IF NOT EXISTS scans (
     errors_json TEXT
 );
 
-CREATE TABLE IF NOT EXISTS schedules (
-    workspace_id TEXT PRIMARY KEY,
-    cron TEXT NOT NULL
-);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
@@ -103,7 +98,6 @@ func (s *SQLiteStore) SaveWorkspace(ctx context.Context, ws *model.Workspace) er
 		ws.ID = uuid.New().String()
 	}
 	stateJSON, _ := json.Marshal(ws.State)
-	regionsJSON, _ := json.Marshal(ws.Regions)
 	subscriptionsJSON, _ := json.Marshal(ws.Subscriptions)
 	compareJSON, _ := json.Marshal(ws.Compare)
 	_, err := s.db.ExecContext(ctx,
@@ -115,14 +109,9 @@ func (s *SQLiteStore) SaveWorkspace(ctx context.Context, ws *model.Workspace) er
 		   regions_json=excluded.regions_json,
 		   subscriptions_json=excluded.subscriptions_json,
 		   compare_json=excluded.compare_json`,
-		ws.ID, ws.Name, ws.Provider, string(stateJSON), string(regionsJSON), string(subscriptionsJSON), string(compareJSON), time.Now().UTC().Format(time.RFC3339),
+		ws.ID, ws.Name, ws.Provider, string(stateJSON), "[]", string(subscriptionsJSON), string(compareJSON), time.Now().UTC().Format(time.RFC3339),
 	)
 	return err
-}
-
-func (s *SQLiteStore) GetWorkspace(ctx context.Context, id string) (*model.Workspace, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, provider, state_json, regions_json, subscriptions_json, compare_json FROM workspaces WHERE id = ?`, id)
-	return scanWorkspace(row)
 }
 
 func (s *SQLiteStore) GetWorkspaceByName(ctx context.Context, name string) (*model.Workspace, error) {
@@ -132,12 +121,11 @@ func (s *SQLiteStore) GetWorkspaceByName(ctx context.Context, name string) (*mod
 
 func scanWorkspace(row *sql.Row) (*model.Workspace, error) {
 	var ws model.Workspace
-	var stateJSON, regionsJSON, subscriptionsJSON, compareJSON string
-	if err := row.Scan(&ws.ID, &ws.Name, &ws.Provider, &stateJSON, &regionsJSON, &subscriptionsJSON, &compareJSON); err != nil {
+	var stateJSON, legacyRegionsJSON, subscriptionsJSON, compareJSON string
+	if err := row.Scan(&ws.ID, &ws.Name, &ws.Provider, &stateJSON, &legacyRegionsJSON, &subscriptionsJSON, &compareJSON); err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal([]byte(stateJSON), &ws.State)
-	_ = json.Unmarshal([]byte(regionsJSON), &ws.Regions)
 	_ = json.Unmarshal([]byte(subscriptionsJSON), &ws.Subscriptions)
 	_ = json.Unmarshal([]byte(compareJSON), &ws.Compare)
 	return &ws, nil
@@ -152,22 +140,16 @@ func (s *SQLiteStore) ListWorkspaces(ctx context.Context) ([]model.Workspace, er
 	var list []model.Workspace
 	for rows.Next() {
 		var ws model.Workspace
-		var stateJSON, regionsJSON, subscriptionsJSON, compareJSON string
-		if err := rows.Scan(&ws.ID, &ws.Name, &ws.Provider, &stateJSON, &regionsJSON, &subscriptionsJSON, &compareJSON); err != nil {
+		var stateJSON, legacyRegionsJSON, subscriptionsJSON, compareJSON string
+		if err := rows.Scan(&ws.ID, &ws.Name, &ws.Provider, &stateJSON, &legacyRegionsJSON, &subscriptionsJSON, &compareJSON); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(stateJSON), &ws.State)
-		_ = json.Unmarshal([]byte(regionsJSON), &ws.Regions)
 		_ = json.Unmarshal([]byte(subscriptionsJSON), &ws.Subscriptions)
 		_ = json.Unmarshal([]byte(compareJSON), &ws.Compare)
 		list = append(list, ws)
 	}
 	return list, nil
-}
-
-func (s *SQLiteStore) DeleteWorkspace(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM workspaces WHERE id = ?`, id)
-	return err
 }
 
 func (s *SQLiteStore) SaveScan(ctx context.Context, report *model.DriftReport) error {
@@ -200,36 +182,6 @@ func (s *SQLiteStore) GetScan(ctx context.Context, id string) (*model.DriftRepor
 	return scanReport(row)
 }
 
-func (s *SQLiteStore) ListScans(ctx context.Context, workspaceID string, limit int) ([]model.DriftReport, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	var rows *sql.Rows
-	var err error
-	if workspaceID != "" {
-		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, workspace_id, workspace_name, status, started_at, completed_at, summary_json, findings_json, errors_json
-			 FROM scans WHERE workspace_id = ? ORDER BY started_at DESC LIMIT ?`, workspaceID, limit)
-	} else {
-		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, workspace_id, workspace_name, status, started_at, completed_at, summary_json, findings_json, errors_json
-			 FROM scans ORDER BY started_at DESC LIMIT ?`, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var list []model.DriftReport
-	for rows.Next() {
-		r, err := scanReport(rows)
-		if err != nil {
-			return nil, err
-		}
-		list = append(list, *r)
-	}
-	return list, nil
-}
-
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -251,42 +203,4 @@ func scanReport(row scanner) (*model.DriftReport, error) {
 	_ = json.Unmarshal([]byte(findingsJSON), &r.Findings)
 	_ = json.Unmarshal([]byte(errorsJSON), &r.Errors)
 	return &r, nil
-}
-
-func (s *SQLiteStore) SaveSchedule(ctx context.Context, workspaceID, cron string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO schedules (workspace_id, cron) VALUES (?, ?)
-		 ON CONFLICT(workspace_id) DO UPDATE SET cron=excluded.cron`, workspaceID, cron)
-	return err
-}
-
-func (s *SQLiteStore) GetSchedule(ctx context.Context, workspaceID string) (string, error) {
-	var cron string
-	err := s.db.QueryRowContext(ctx, `SELECT cron FROM schedules WHERE workspace_id = ?`, workspaceID).Scan(&cron)
-	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("no schedule for workspace %s", workspaceID)
-	}
-	return cron, err
-}
-
-func (s *SQLiteStore) ListSchedules(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT workspace_id, cron FROM schedules`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[string]string)
-	for rows.Next() {
-		var wsID, cron string
-		if err := rows.Scan(&wsID, &cron); err != nil {
-			return nil, err
-		}
-		out[wsID] = cron
-	}
-	return out, nil
-}
-
-func (s *SQLiteStore) DeleteSchedule(ctx context.Context, workspaceID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM schedules WHERE workspace_id = ?`, workspaceID)
-	return err
 }

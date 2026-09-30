@@ -62,6 +62,9 @@ func (p *Provider) SupportedTypes() []string {
 }
 
 func (p *Provider) FetchResources(ctx context.Context, expected []model.Resource, opts providerconfig.FetchOptions) ([]model.Resource, error) {
+	if len(expected) == 0 {
+		return nil, nil
+	}
 	subscriptions := resolveSubscriptions(opts.Subscriptions, expected)
 	if len(subscriptions) == 0 {
 		return nil, fmt.Errorf("Azure discovery requires --subscription, workspace subscriptions, or AZURE_SUBSCRIPTION_ID")
@@ -72,12 +75,8 @@ func (p *Provider) FetchResources(ctx context.Context, expected []model.Resource
 		return nil, fmt.Errorf("create Azure credential: %w", err)
 	}
 
-	queries := []string{
-		"Resources | project id, name, type, location, tags, properties, sku, kind, subscriptionId, resourceGroup",
-		"ResourceContainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups' | project id, name, type, location, tags, subscriptionId",
-	}
 	var rows []graphResource
-	for _, query := range queries {
+	for _, query := range stateScopedQueries(expected) {
 		items, err := p.query(ctx, credential, subscriptions, query)
 		if err != nil {
 			return nil, err
@@ -99,20 +98,18 @@ func (p *Provider) FetchResources(ctx context.Context, expected []model.Resource
 		}
 		seen[cloudID] = true
 
-		resourceType := terraformTypeForARM(row.Type)
-		resourceID := fmt.Sprintf("azure/%s/%s", resourceType, cloudID)
-		if expectedResource, ok := expectedByCloudID[cloudID]; ok {
-			resourceType = expectedResource.Type
-			resourceID = expectedResource.ID
+		expectedResource, ok := expectedByCloudID[cloudID]
+		if !ok {
+			continue
 		}
 
 		resources = append(resources, model.Resource{
-			ID:         resourceID,
+			ID:         expectedResource.ID,
 			Provider:   "azure",
-			Type:       resourceType,
+			Type:       expectedResource.Type,
 			CloudID:    cloudID,
 			Name:       row.Name,
-			Attributes: azureAttributes(resourceType, row),
+			Attributes: azureAttributes(expectedResource.Type, row),
 			Tags:       stringMap(row.Tags),
 			Region:     strings.ToLower(row.Location),
 			Source:     "cloud",
@@ -120,6 +117,40 @@ func (p *Provider) FetchResources(ctx context.Context, expected []model.Resource
 	}
 
 	return resources, nil
+}
+
+const resourceIDQueryChunkSize = 200
+
+func stateScopedQueries(expected []model.Resource) []string {
+	set := make(map[string]bool, len(expected))
+	for _, resource := range expected {
+		if id := normalizeResourceID(resource.CloudID); id != "" {
+			set[id] = true
+		}
+	}
+	ids := make([]string, 0, len(set))
+	for id := range set {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	queries := make([]string, 0, ((len(ids)+resourceIDQueryChunkSize-1)/resourceIDQueryChunkSize)*2)
+	for start := 0; start < len(ids); start += resourceIDQueryChunkSize {
+		end := start + resourceIDQueryChunkSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		quoted := make([]string, 0, end-start)
+		for _, id := range ids[start:end] {
+			quoted = append(quoted, "'"+strings.ReplaceAll(id, "'", "''")+"'")
+		}
+		filter := strings.Join(quoted, ",")
+		queries = append(queries,
+			"Resources | where id in~ ("+filter+") | project id, name, type, location, tags, properties, sku, kind, subscriptionId, resourceGroup",
+			"ResourceContainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups' | where id in~ ("+filter+") | project id, name, type, location, tags, subscriptionId",
+		)
+	}
+	return queries
 }
 
 func newCredential() (azcore.TokenCredential, error) {
@@ -295,28 +326,6 @@ func (p *Provider) query(ctx context.Context, credential azcore.TokenCredential,
 		}
 		skipToken = result.SkipToken
 	}
-}
-
-func terraformTypeForARM(armType string) string {
-	types := map[string]string{
-		"microsoft.resources/subscriptions/resourcegroups": "azurerm_resource_group",
-		"microsoft.storage/storageaccounts":                "azurerm_storage_account",
-		"microsoft.network/virtualnetworks":                "azurerm_virtual_network",
-		"microsoft.network/virtualnetworks/subnets":        "azurerm_subnet",
-		"microsoft.network/networksecuritygroups":          "azurerm_network_security_group",
-		"microsoft.compute/virtualmachines":                "azurerm_virtual_machine",
-		"microsoft.network/publicipaddresses":              "azurerm_public_ip",
-		"microsoft.keyvault/vaults":                        "azurerm_key_vault",
-		"microsoft.containerregistry/registries":           "azurerm_container_registry",
-		"microsoft.containerservice/managedclusters":       "azurerm_kubernetes_cluster",
-	}
-	if resourceType, ok := types[strings.ToLower(armType)]; ok {
-		return resourceType
-	}
-	if armType == "" {
-		return "azure_resource"
-	}
-	return "azure_resource:" + strings.ToLower(armType)
 }
 
 func azureAttributes(resourceType string, row graphResource) map[string]any {

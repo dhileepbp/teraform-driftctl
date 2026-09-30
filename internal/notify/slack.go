@@ -196,8 +196,8 @@ func formatSlackMessage(report *model.DriftReport, maxFindings int) string {
 	fmt.Fprintf(&b, "%s in *%s*\n", status, report.Workspace)
 	fmt.Fprintf(&b, "Scan `%s` · resources %d · findings %d", report.ScanID, report.Summary.TotalResources, report.Summary.TotalFindings)
 	if report.HasDrift() {
-		fmt.Fprintf(&b, "\nMissing %d · extra %d · attributes %d · tags %d",
-			report.Summary.MissingInCloud, report.Summary.ExtraInCloud,
+		fmt.Fprintf(&b, "\nMissing %d · attributes %d · tags %d",
+			report.Summary.MissingInCloud,
 			report.Summary.AttributeChanges, report.Summary.TagChanges)
 	}
 	for i, finding := range report.Findings {

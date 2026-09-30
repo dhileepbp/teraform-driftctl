@@ -35,7 +35,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newScanCmd(&cfgFile))
 	root.AddCommand(newReportCmd(&cfgFile))
 	root.AddCommand(newWorkspaceCmd(&cfgFile))
-	root.AddCommand(newScheduleCmd(&cfgFile))
 	return root
 }
 
@@ -115,14 +114,10 @@ func newScanCmd(cfgFile *string) *cobra.Command {
 		workspace     string
 		statePath     string
 		provider      string
-		regions       []string
 		subscriptions []string
 		outputFmt     string
 		jsonFile      string
 		skipCloud     bool
-		stateBucket   string
-		stateKey      string
-		stateRegion   string
 		slack         slackFlags
 	)
 
@@ -149,7 +144,7 @@ func newScanCmd(cfgFile *string) *cobra.Command {
 				return fmt.Errorf("configure notifications: %w", err)
 			}
 			scanner := scan.NewScanner(st, notifiers...)
-			opts := scan.Options{Compare: model.CompareConfig{}, Regions: regions}
+			opts := scan.Options{Compare: model.CompareConfig{}}
 
 			if workspace != "" {
 				ws, err := st.GetWorkspaceByName(cmd.Context(), workspace)
@@ -160,28 +155,18 @@ func newScanCmd(cfgFile *string) *cobra.Command {
 				opts.WorkspaceName = ws.Name
 				opts.Provider = ws.Provider
 				opts.State = ws.State
-				opts.Regions = ws.Regions
 				opts.Subscriptions = ws.Subscriptions
 				opts.Compare = ws.Compare
 			} else {
-				if statePath == "" && stateBucket == "" {
-					return fmt.Errorf("either --workspace, --state, or --state-bucket is required")
+				if statePath == "" {
+					return fmt.Errorf("either --workspace or --state is required")
 				}
 				if provider == "" {
-					provider = "aws"
+					provider = "azure"
 				}
 				opts.WorkspaceName = "adhoc"
 				opts.Provider = provider
-				if stateBucket != "" {
-					opts.State = model.StateConfig{
-						Backend: "s3",
-						Bucket:  stateBucket,
-						Key:     stateKey,
-						Region:  stateRegion,
-					}
-				} else {
-					opts.State = model.StateConfig{Backend: "local", Path: statePath}
-				}
+				opts.State = model.StateConfig{Backend: "local", Path: statePath}
 			}
 			opts.Subscriptions = append(opts.Subscriptions, subscriptions...)
 			opts.SkipCloud = skipCloud
@@ -210,15 +195,11 @@ func newScanCmd(cfgFile *string) *cobra.Command {
 
 	cmd.Flags().StringVar(&workspace, "workspace", "", "workspace name")
 	cmd.Flags().StringVar(&statePath, "state", "", "path to terraform.tfstate")
-	cmd.Flags().StringVar(&provider, "provider", "aws", "cloud provider")
-	cmd.Flags().StringSliceVar(&regions, "region", nil, "cloud regions (repeatable)")
+	cmd.Flags().StringVar(&provider, "provider", "azure", "cloud provider (azure)")
 	cmd.Flags().StringSliceVar(&subscriptions, "subscription", nil, "Azure subscription ID (repeatable)")
 	cmd.Flags().StringVar(&outputFmt, "output", "table", "output format: json|table")
 	cmd.Flags().StringVar(&jsonFile, "json-file", "", "also write the complete report to a JSON file")
 	cmd.Flags().BoolVar(&skipCloud, "skip-cloud", false, "skip cloud fetch (state-only, for testing)")
-	cmd.Flags().StringVar(&stateBucket, "state-bucket", "", "S3 bucket for terraform state")
-	cmd.Flags().StringVar(&stateKey, "state-key", "", "S3 key for terraform state")
-	cmd.Flags().StringVar(&stateRegion, "state-region", "", "S3 region for terraform state")
 	slack.bind(cmd)
 	return cmd
 }
@@ -281,34 +262,4 @@ func listWorkspaces(ctx context.Context, cfgFile string) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(list)
-}
-
-func newScheduleCmd(cfgFile *string) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "schedule",
-		Short: "Manage scan schedules",
-	}
-	var cronExpr, workspace string
-	create := &cobra.Command{
-		Use:   "create",
-		Short: "Create or update a schedule",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, _, err := openStore(*cfgFile)
-			if err != nil {
-				return err
-			}
-			defer st.Close()
-			ws, err := st.GetWorkspaceByName(cmd.Context(), workspace)
-			if err != nil {
-				return err
-			}
-			return st.SaveSchedule(cmd.Context(), ws.ID, cronExpr)
-		},
-	}
-	create.Flags().StringVar(&workspace, "workspace", "", "workspace name")
-	create.Flags().StringVar(&cronExpr, "cron", "", "cron expression")
-	_ = create.MarkFlagRequired("workspace")
-	_ = create.MarkFlagRequired("cron")
-	cmd.AddCommand(create)
-	return cmd
 }

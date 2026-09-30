@@ -16,7 +16,7 @@ type Reader interface {
 	Read(ctx context.Context, cfg model.StateConfig) ([]byte, error)
 }
 
-// DefaultReader supports local files, HTTP(S), and S3 backends.
+// DefaultReader supports local files and HTTP(S) backends.
 type DefaultReader struct{}
 
 func NewReader() *DefaultReader {
@@ -34,8 +34,6 @@ func (r *DefaultReader) Read(ctx context.Context, cfg model.StateConfig) ([]byte
 		return readLocal(cfg.Path)
 	case "http", "https":
 		return readHTTP(ctx, cfg.Path)
-	case "s3":
-		return readS3(ctx, cfg)
 	default:
 		return nil, fmt.Errorf("unsupported state backend: %s", cfg.Backend)
 	}

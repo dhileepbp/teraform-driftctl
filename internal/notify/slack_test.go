@@ -127,7 +127,7 @@ func driftReport() *model.DriftReport {
 		},
 		Findings: []model.DriftFinding{{
 			Kind:         model.DriftMissingInCloud,
-			ResourceType: "aws_instance",
+			ResourceType: "azurerm_linux_virtual_machine",
 			ResourceName: "web",
 		}},
 	}

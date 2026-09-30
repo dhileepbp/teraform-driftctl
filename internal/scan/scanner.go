@@ -33,7 +33,6 @@ type Options struct {
 	WorkspaceName string
 	Provider      string
 	State         model.StateConfig
-	Regions       []string
 	Subscriptions []string
 	Compare       model.CompareConfig
 	SkipCloud     bool // for testing with state-only
@@ -85,7 +84,6 @@ func (s *Scanner) Run(ctx context.Context, opts Options) (*model.DriftReport, er
 			return s.failScan(ctx, report, fmt.Errorf("unsupported provider: %s", opts.Provider))
 		}
 		actual, err = provider.FetchResources(ctx, expected, providerconfig.FetchOptions{
-			Regions:       opts.Regions,
 			Subscriptions: opts.Subscriptions,
 		})
 		if err != nil {

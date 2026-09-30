@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/driftctl/driftctl/internal/model"
-	"github.com/driftctl/driftctl/internal/providers/aws"
 	"github.com/driftctl/driftctl/internal/providers/azure"
 	"github.com/driftctl/driftctl/internal/providers/providerconfig"
 )
@@ -36,7 +35,6 @@ func (r *Registry) Get(name string) (CloudProvider, bool) {
 
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
-	r.Register(aws.NewProvider())
 	r.Register(azure.NewProvider())
 	return r
 }

@@ -13,19 +13,12 @@ import (
 // File represents the driftctl.yaml configuration.
 type File struct {
 	Database      string              `yaml:"database"`
-	API           APIConfig           `yaml:"api"`
 	Notifications NotificationsConfig `yaml:"notifications"`
 	Workspaces    []model.Workspace   `yaml:"workspaces"`
 }
 
 type NotificationsConfig struct {
 	Slack notify.SlackConfig `yaml:"slack"`
-}
-
-// APIConfig holds server settings.
-type APIConfig struct {
-	Addr   string `yaml:"addr"`
-	APIKey string `yaml:"api_key"`
 }
 
 // Load reads configuration from a YAML file.
@@ -40,9 +33,6 @@ func Load(path string) (*File, error) {
 	}
 	if cfg.Database == "" {
 		cfg.Database = "driftctl.db"
-	}
-	if cfg.API.Addr == "" {
-		cfg.API.Addr = ":8080"
 	}
 	return &cfg, nil
 }

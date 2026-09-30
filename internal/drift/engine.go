@@ -40,11 +40,9 @@ func (e *Engine) Compare(expected, actual []model.Resource) []model.DriftFinding
 		actualIndex[r.ID] = r
 	}
 
-	expectedIndex := make(map[string]model.Resource, len(expected))
 	var findings []model.DriftFinding
 
 	for _, exp := range expected {
-		expectedIndex[exp.ID] = exp
 		act, ok := actualIndex[exp.ID]
 		if !ok {
 			findings = append(findings, model.DriftFinding{
@@ -58,18 +56,6 @@ func (e *Engine) Compare(expected, actual []model.Resource) []model.DriftFinding
 		}
 		findings = append(findings, e.diffAttributes(exp, act)...)
 		findings = append(findings, e.diffTags(exp, act)...)
-	}
-
-	for _, act := range actual {
-		if _, ok := expectedIndex[act.ID]; !ok {
-			findings = append(findings, model.DriftFinding{
-				Kind:         model.DriftExtraInCloud,
-				ResourceID:   act.ID,
-				ResourceType: act.Type,
-				ResourceName: act.Name,
-				Severity:     model.SeverityWarning,
-			})
-		}
 	}
 
 	return findings
@@ -241,8 +227,6 @@ func BuildSummary(expectedCount int, findings []model.DriftFinding) model.DriftS
 		switch f.Kind {
 		case model.DriftMissingInCloud:
 			s.MissingInCloud++
-		case model.DriftExtraInCloud:
-			s.ExtraInCloud++
 		case model.DriftAttributeChange:
 			s.AttributeChanges++
 		case model.DriftTagsChanged:

@@ -6,34 +6,34 @@ import (
 	"github.com/driftctl/driftctl/internal/model"
 )
 
-func TestEngineCompareMissingAndTags(t *testing.T) {
+func TestEngineCompareAttributesAndTagsIgnoresCloudOnlyResources(t *testing.T) {
 	engine := NewEngine(model.CompareConfig{})
 
 	expected := []model.Resource{
 		{
-			ID: "aws/aws_instance/i-123", Provider: "aws", Type: "aws_instance",
-			CloudID: "i-123", Name: "web",
-			Attributes: map[string]any{"instance_type": "t3.micro"},
+			ID: "azure/azurerm_linux_virtual_machine/vm-123", Provider: "azure", Type: "azurerm_linux_virtual_machine",
+			CloudID: "vm-123", Name: "web",
+			Attributes: map[string]any{"size": "Standard_B1s"},
 			Tags:       map[string]string{"env": "prod"},
 		},
 	}
 
 	actual := []model.Resource{
 		{
-			ID: "aws/aws_instance/i-123", Provider: "aws", Type: "aws_instance",
-			CloudID: "i-123", Name: "web",
-			Attributes: map[string]any{"instance_type": "t3.small"},
+			ID: "azure/azurerm_linux_virtual_machine/vm-123", Provider: "azure", Type: "azurerm_linux_virtual_machine",
+			CloudID: "vm-123", Name: "web",
+			Attributes: map[string]any{"size": "Standard_B2s"},
 			Tags:       map[string]string{"env": "staging"},
 		},
 		{
-			ID: "aws/aws_vpc/vpc-orphan", Provider: "aws", Type: "aws_vpc",
-			CloudID: "vpc-orphan", Name: "orphan",
+			ID: "azure/azurerm_resource_group/cloud-only", Provider: "azure", Type: "azurerm_resource_group",
+			CloudID: "cloud-only", Name: "cloud-only",
 		},
 	}
 
 	findings := engine.Compare(expected, actual)
-	if len(findings) < 3 {
-		t.Fatalf("expected at least 3 findings, got %d", len(findings))
+	if len(findings) != 2 {
+		t.Fatalf("expected only attribute and tag findings, got %+v", findings)
 	}
 
 	summary := BuildSummary(len(expected), findings)
@@ -43,15 +43,12 @@ func TestEngineCompareMissingAndTags(t *testing.T) {
 	if summary.TagChanges < 1 {
 		t.Fatal("expected tag change")
 	}
-	if summary.ExtraInCloud < 1 {
-		t.Fatal("expected extra in cloud")
-	}
 }
 
 func TestEngineCompareMissingInCloud(t *testing.T) {
 	engine := NewEngine(model.CompareConfig{})
 	expected := []model.Resource{
-		{ID: "aws/aws_instance/i-gone", Provider: "aws", Type: "aws_instance", CloudID: "i-gone", Tags: map[string]string{"env": "prod"}},
+		{ID: "azure/azurerm_linux_virtual_machine/vm-gone", Provider: "azure", Type: "azurerm_linux_virtual_machine", CloudID: "vm-gone", Tags: map[string]string{"env": "prod"}},
 	}
 	findings := engine.Compare(expected, nil)
 	if len(findings) != 1 || findings[0].Kind != model.DriftMissingInCloud {

@@ -21,7 +21,7 @@ func TestScannerRunSkipCloud(t *testing.T) {
 	}
 	defer st.Close()
 
-	statePath, _ := filepath.Abs("../../testdata/state/sample.tfstate")
+	statePath, _ := filepath.Abs("../../testdata/state/azure-sample.tfstate")
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestScannerRunSkipCloud(t *testing.T) {
 	scanner := NewScanner(st)
 	report, err := scanner.Run(context.Background(), Options{
 		WorkspaceName: "test",
-		Provider:      "aws",
+		Provider:      "azure",
 		State:         model.StateConfig{Backend: "local", Path: statePath},
 		SkipCloud:     true,
 	})
@@ -62,7 +62,7 @@ func TestScannerFailsWhenLiveDiscoveryFails(t *testing.T) {
 	}
 	defer st.Close()
 
-	statePath, err := filepath.Abs("../../testdata/state/sample.tfstate")
+	statePath, err := filepath.Abs("../../testdata/state/azure-sample.tfstate")
 	if err != nil {
 		t.Fatal(err)
 	}

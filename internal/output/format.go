@@ -37,7 +37,6 @@ func writeTable(w io.Writer, report *model.DriftReport) error {
 	fmt.Fprintln(tw, "SUMMARY")
 	fmt.Fprintf(tw, "Total Resources:\t%d\n", report.Summary.TotalResources)
 	fmt.Fprintf(tw, "Missing in Cloud:\t%d\n", report.Summary.MissingInCloud)
-	fmt.Fprintf(tw, "Extra in Cloud:\t%d\n", report.Summary.ExtraInCloud)
 	fmt.Fprintf(tw, "Attribute Changes:\t%d\n", report.Summary.AttributeChanges)
 	fmt.Fprintf(tw, "Tag Changes:\t%d\n", report.Summary.TagChanges)
 	fmt.Fprintf(tw, "Total Findings:\t%d\n", report.Summary.TotalFindings)

@@ -21,6 +21,7 @@ import (
 func TestProviderFetchResources(t *testing.T) {
 	credential := &staticCredential{}
 	requests := 0
+	var queries []string
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		requests++
 		if got := req.Header.Get("Authorization"); got != "Bearer test-token" {
@@ -33,6 +34,7 @@ func TestProviderFetchResources(t *testing.T) {
 		if !reflect.DeepEqual(query.Subscriptions, []string{"sub-123"}) {
 			t.Fatalf("unexpected subscriptions: %v", query.Subscriptions)
 		}
+		queries = append(queries, query.Query)
 
 		body := `{"data":[]}`
 		if strings.HasPrefix(query.Query, "Resources ") {
@@ -80,8 +82,8 @@ func TestProviderFetchResources(t *testing.T) {
 	if requests != 2 {
 		t.Fatalf("expected resource and resource-group queries, got %d requests", requests)
 	}
-	if len(actual) != 2 {
-		t.Fatalf("expected two resources, got %d", len(actual))
+	if len(actual) != 1 {
+		t.Fatalf("expected only the state-managed resource, got %+v", actual)
 	}
 	if actual[0].ID != expected[0].ID {
 		t.Fatalf("expected Terraform resource ID %q, got %q", expected[0].ID, actual[0].ID)
@@ -89,8 +91,10 @@ func TestProviderFetchResources(t *testing.T) {
 	if got := actual[0].Attributes["account_replication_type"]; got != "LRS" {
 		t.Fatalf("expected LRS replication, got %v", got)
 	}
-	if actual[1].Type != "azurerm_key_vault" {
-		t.Fatalf("expected mapped Key Vault type, got %q", actual[1].Type)
+	for _, query := range queries {
+		if !strings.Contains(strings.ToLower(query), resourceID) {
+			t.Fatalf("expected state-scoped Resource Graph query, got %q", query)
+		}
 	}
 	if !reflect.DeepEqual(credential.scopes, []string{resourceManagerScope}) {
 		t.Fatalf("unexpected token scopes: %v", credential.scopes)

@@ -37,11 +37,9 @@ steps:
       scriptType: bash
       scriptLocation: inlineScript
       inlineScript: |
-        read -r subscription_id < <(az account show --query id -o tsv)
         ./bin/tfdriftctl scan \
           --provider azure \
           --state "${{ parameters.terraformStatePath }}" \
-          --subscription "$subscription_id" \
           --output table \
           --json-file "$(Build.ArtifactStagingDirectory)/tfdrift-report.json"
 
